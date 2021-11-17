@@ -11,9 +11,10 @@ namespace azure
         {
             var connection = GetAzureConnection();
             Console.WriteLine("Established azure connection successfully. Starting to fetch and analyse commits...");
-            var releaseReportGenerator = new ReleaseReport(connection);
+            var releaseReportGenerator = new ReleaseReportGenerator(connection);
             await releaseReportGenerator.ComputeChangeSet();
-            Console.WriteLine($"Commit diff report generated successfully at {Config.ReportPath}");
+            Console.WriteLine(
+                $"Commit diff report generated successfully at {Config.UnrelatedCommitsReportPath} and {Config.RelatedCommitsReportPath}");
         }
 
         private static VssConnection GetAzureConnection()

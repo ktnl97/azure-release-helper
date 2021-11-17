@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -13,15 +14,16 @@ using Newtonsoft.Json;
 
 namespace azure
 {
-    public class ReleaseReport
+    public class ReleaseReportGenerator
     {
         private readonly ProjectHttpClient _projectHttpClient;
         private readonly GitHttpClient _gitHttpClient;
         private readonly VssConnection _connection;
-        private string _reportContent = "";
+        private string _unrelatedChanges = "";
+        private string _relatedChanges = "";
         private static string _workItemTagsIdentifier;
 
-        public ReleaseReport(VssConnection connection)
+        public ReleaseReportGenerator(VssConnection connection)
         {
             _connection = connection;
             _projectHttpClient = connection.GetClient<ProjectHttpClient>();
@@ -32,10 +34,12 @@ namespace azure
         {
             foreach (var project in await GetProjects())
             {
-                _reportContent += $"\n \n Analysing project: {project.Name} \n \n";
+                _unrelatedChanges += $"\n \n Analysing project: {project.Name} \n \n";
+                _relatedChanges += $"\n \n Analysing project: {project.Name} \n \n";
                 foreach (var repo in await GetRelatedRepos(project.Id.ToString(), project.Name))
                 {
-                    _reportContent += $"\n *Analysing commit diff for repo: {repo.Name}* \n";
+                    _unrelatedChanges += $"\n => Analysing commit diff for repo: {repo.Name}* \n";
+                    _relatedChanges += $"\n => Analysing commit diff for repo: {repo.Name}* \n";
                     var diffCommits = await GetDiffCommitsByComparingBranches(repo.BaseBranch,  repo.Id);
                     await ProcessDiffCommits(diffCommits);
                 }
@@ -45,13 +49,19 @@ namespace azure
 
         private void WriteContentToReport()
         {
-            if (!File.Exists(Config.ReportPath))
+            WriteContent(Config.UnrelatedCommitsReportPath, _unrelatedChanges);
+            WriteContent(Config.RelatedCommitsReportPath, _relatedChanges);
+        }
+
+        private void WriteContent(string filePath, string content)
+        {
+            if (!File.Exists(filePath))
             {
-                File.CreateText(Config.ReportPath);
+                File.CreateText(filePath);
             }
 
-            using var writeText = new StreamWriter(Config.ReportPath);
-            writeText.WriteLine(_reportContent);
+            using var writeText = new StreamWriter(filePath);
+            writeText.WriteLine(content);
         }
 
         private async Task<IEnumerable<RepositoryDetails>> GetRelatedRepos(string projectId, string projectName)
@@ -83,14 +93,15 @@ namespace azure
                 var workItemIds = diffCommit.WorkItems?.Select(x => int.Parse(x.Id)).ToList();
                 if (workItemIds == null || !workItemIds.Any())
                 {
-                    _reportContent += 
-                        "\n No work items associated with commit \n" +
-                        $"{diffCommit.CommitId} => " +
-                        $"{GetCommitLink(diffCommit.Url)} \n";
+                    _unrelatedChanges += 
+                        "\n \t \t No work items associated with commit \n" +
+                        $"\t \t {diffCommit.CommitId} => " +
+                        $"\t \t {GetCommitLink(diffCommit.Url)} \n" +
+                        $"\t \t Authored by {diffCommit.Author?.Name} \n";
                 }
                 else
                 {
-                    await CheckRelatedWorkItemTags(_connection, Config.ReleaseTag, workItemIds, diffCommit.CommitId);
+                    await CheckRelatedWorkItemTags(_connection, Config.ReleaseTags, workItemIds, diffCommit);
                 }
             }
         }
@@ -104,19 +115,26 @@ namespace azure
                 .Replace("/commits/", "/commit/");
         }
 
-        private async Task CheckRelatedWorkItemTags(VssConnection connection, string releaseTag, IEnumerable<int> workItemIds, string commitId)
+        [SuppressMessage("ReSharper.DPA", "DPA0003: Excessive memory allocations in LOH", MessageId = "type: System.String; size: 209MB")]
+        private async Task CheckRelatedWorkItemTags(VssConnection connection, List<string> releaseTags, IEnumerable<int> workItemIds, GitCommitRef commit)
         {
             WorkItemTrackingHttpClient witClient = connection.GetClient<WorkItemTrackingHttpClient>();
             connection.GetClient<GitCompatHttpClientBase>();
             _workItemTagsIdentifier = "System.Tags";
             var workItems = await witClient.GetWorkItemsAsync(workItemIds, new[] {_workItemTagsIdentifier});
             var workItemsTags = workItems.SelectMany(GetWorkItemTags);
-            if (!workItemsTags.Contains(releaseTag))
+            if (!workItemsTags.Any(releaseTags.Contains))
             {
-                _reportContent += 
-                    $"\n Commit {commitId} related to work item(s) \n" +
-                    $"{JsonConvert.SerializeObject(workItems.Select(w => $"{w.Id} => {GetWorkItemLink(w)}"))} \n" +
-                    $"found without {releaseTag} tag \n";
+                _unrelatedChanges +=
+                    $"\n \t \t Commit {commit.CommitId} => {GetCommitLink(commit.Url)} related to work item(s) \n" +
+                    $"\t \t {JsonConvert.SerializeObject(workItems.Select(w => $"{w.Id} => {GetWorkItemLink(w)}"))} \n" +
+                    $"\t \t found without {string.Join(",", releaseTags)} tag(s) => Authored by {commit.Author?.Name} \n";
+            }
+            else
+            {
+                _relatedChanges += $"\n \t \t Commit {commit.CommitId} => {GetCommitLink(commit.Url)} related to work item(s) \n" +
+                                   $"\t \t {JsonConvert.SerializeObject(workItems.Select(w => $"{w.Id} => {GetWorkItemLink(w)}"))} \n" +
+                                   $"\t \t found with {string.Join(",", releaseTags)} tag(s) \n";
             }
         }
 
@@ -191,7 +209,8 @@ namespace azure
             var targetBranchCommits = await gitClient.GetCommitsAsync(repoId, targetBranchSearchCriteria, top: Config.MaxDiffNumber);
 
             return targetBranchCommits.Where(commit =>
-                !baseBranchCommits.Select(x => x.CommitId).ToList().Contains(commit.CommitId)).ToList();
+                !baseBranchCommits.Any(baseCommit =>
+                    baseCommit.CommitId == commit.CommitId || baseCommit.Comment == commit.Comment)).ToList();
         }
     }
 }
