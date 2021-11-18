@@ -34,8 +34,7 @@ namespace azure
         public const string TargetBranch = "Master_branch";
         public const string AzureDevopsUrl = "Azure_devops_url";
         public const string Pat = "Your_PAT";
-        public const string UnrelatedCommitsReportPath = "Full_path_to_save_unrelated_changes_report";
-        public const string RelatedCommitsReportPath = "Full_path_to_save_related_changes_report";
+        public const string CurrentReleaseBranch = "";
         public const int MaxDiffNumber = 200;
     }
 }

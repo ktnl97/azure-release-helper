@@ -11,10 +11,27 @@ namespace azure
         {
             var connection = GetAzureConnection();
             Console.WriteLine("Established azure connection successfully. Starting to fetch and analyse commits...");
-            var releaseReportGenerator = new ReleaseReportGenerator(connection);
+            var releaseReportGenerator = new CommitChecker(connection);
             await releaseReportGenerator.ComputeChangeSet();
-            Console.WriteLine(
-                $"Commit diff report generated successfully at {Config.UnrelatedCommitsReportPath} and {Config.RelatedCommitsReportPath}");
+
+            PrintReleaseBranchComparisonLinks();
+        }
+
+        private static void PrintReleaseBranchComparisonLinks()
+        {
+            if(string.IsNullOrWhiteSpace(Config.CurrentReleaseBranch))
+                return;
+            
+            foreach (var (projectName, repoDetails) in Config.RepoConfigs)
+            {
+                foreach (var repoDetail in repoDetails)
+                {
+                    Console.WriteLine(
+                        $"{repoDetail.Name} \n " +
+                        $"https://occm.visualstudio.com/{projectName}/_git/{repoDetail.Name}/branchCompare?baseVersion=GB{repoDetail.BaseBranch}&targetVersion=GB{Config.CurrentReleaseBranch}&_a=commits" +
+                        "\n");
+                }
+            }
         }
 
         private static VssConnection GetAzureConnection()
